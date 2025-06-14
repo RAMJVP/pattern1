@@ -4,6 +4,15 @@ import yfinance as yf
 from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
+
+
+
+
+TWELVE_DATA_API_KEY = "663d44b03e2148c3a45e9e58f9cd6cb6"
+
+
+
 
 app = FastAPI()
 
@@ -58,7 +67,7 @@ def get_nifty_ohlcv_l(days: int = 20) -> pd.DataFrame:
     
     
     
-def get_nifty_ohlcv(days: int = 20) -> pd.DataFrame:
+def get_nifty_ohlcv_nw(days: int = 20) -> pd.DataFrame:
     try:
         df = yf.Ticker("^NSEI").history(period=f"{days}d", interval="1d")
         if df.empty:
@@ -117,6 +126,46 @@ def detect_pattern(data: PatternInput):
 
     return PatternOutput(pattern=pattern, signal=signal, confidence=confidence, reason=reason)
 
+
+def get_nifty_ohlcv_td(days: int = 20) -> pd.DataFrame:
+    url = f"https://api.twelvedata.com/time_series?symbol=NIFTY_50&interval=1day&outputsize={days}&apikey={TWELVE_DATA_API_KEY}"
+    
+    response = httpx.get(url)
+    data = response.json()
+
+    if "values" not in data:
+        raise RuntimeError(f"No values found in response. Message: {data.get('message', 'No message')}")
+
+    df = pd.DataFrame(data["values"])
+    df = df.rename(columns={"open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"})
+    df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
+    df = df.iloc[::-1].reset_index(drop=True)
+    return df
+
+
+
+def get_nifty_ohlcv(days: int = 20) -> pd.DataFrame:
+    try:
+        # Try Yahoo Finance first
+        df = yf.Ticker("^NSEI").history(period=f"{days}d", interval="1d")
+        if not df.empty:
+            return df[["Open", "High", "Low", "Close", "Volume"]].rename(str.lower, axis=1)
+    except Exception as e:
+        print(f"[ERROR] yfinance failed: {e}")
+
+    # Fall back to Reliance stock (example)
+    print("[INFO] Falling back to RELIANCE.NS via Twelve Data")
+    url = f"https://api.twelvedata.com/time_series?symbol=RELIANCE.NS&interval=1day&outputsize={days}&apikey={TWELVE_DATA_API_KEY}"
+    response = httpx.get(url)
+    data = response.json()
+
+    if "values" not in data:
+        raise RuntimeError(f"No values found in response. Message: {data.get('message', 'No message')}")
+
+    df = pd.DataFrame(data["values"])
+    df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
+    df = df.iloc[::-1].reset_index(drop=True)
+    return df
 
 
 @app.post("/api/pattern-detect", response_model=PatternOutput)
