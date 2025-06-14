@@ -50,11 +50,74 @@ class PatternOutput(BaseModel):
     confidence: float
     reason: str
 
-def get_nifty_ohlcv(days: int = 20) -> pd.DataFrame:
+def get_nifty_ohlcv_l(days: int = 20) -> pd.DataFrame:
     df = yf.Ticker("^NSEI").history(period=f"{days}d", interval="1d")
     if df.empty:
         raise RuntimeError("Failed to fetch NIFTY data")
     return df[["Open", "High", "Low", "Close", "Volume"]].rename(str.lower, axis=1)
+    
+    
+    
+def get_nifty_ohlcv(days: int = 20) -> pd.DataFrame:
+    try:
+        df = yf.Ticker("^NSEI").history(period=f"{days}d", interval="1d")
+        if df.empty:
+            raise ValueError("Empty")
+    except:
+        print("[X] Failed to fetch ^NSEI. Trying fallback: NIFTYBEES.NS")
+        df = yf.Ticker("NIFTYBEES.NS").history(period=f"{days}d", interval="1d")
+        if df.empty:
+            raise RuntimeError("Failed to fetch NIFTY data from fallback")
+    
+    return df[["Open", "High", "Low", "Close", "Volume"]].rename(str.lower, axis=1)
+
+
+
+
+
+@app.post("/api/pattern-detect-l", response_model=PatternOutput)
+def detect_pattern(data: PatternInput):
+    df = get_nifty_ohlcv_l()
+
+    # Apply Bullish Harami
+    df["bullish_harami"] = ta.cdl_pattern(
+        name="cdl_harami",  # Correct lowercase pattern name
+        open_=df["open"],
+        high=df["high"],
+        low=df["low"],
+        close=df["close"]
+    )
+
+    # Apply Bullish Engulfing
+    df["engulfing"] = ta.cdl_pattern(
+        name="cdl_engulfing",  # Correct lowercase pattern name
+        open_=df["open"],
+        high=df["high"],
+        low=df["low"],
+        close=df["close"]
+    )
+
+    last = df.iloc[-1]
+    pattern = "None"
+    signal = "WAIT"
+    confidence = 55.0
+    reason = f"No pattern detected. RSI={data.rsi}, VIX={data.vix}, OI Change={data.oiChange}%"
+
+    if last["bullish_harami"] != 0:
+        pattern = "Bullish Harami"
+        signal = "BUY CE"
+        confidence = 85.0 if data.rsi < 40 else 70.0
+        reason = f"{pattern} + RSI={data.rsi}, VIX={data.vix}, OI Change={data.oiChange}%"
+
+    elif last["engulfing"] != 0:
+        pattern = "Engulfing"
+        signal = "BUY CE" if data.rsi < 50 else "SELL PE"
+        confidence = 80.0
+        reason = f"{pattern} + RSI={data.rsi}, VIX={data.vix}, OI Change={data.oiChange}%"
+
+    return PatternOutput(pattern=pattern, signal=signal, confidence=confidence, reason=reason)
+
+
 
 @app.post("/api/pattern-detect", response_model=PatternOutput)
 def detect_pattern(data: PatternInput):
@@ -97,7 +160,6 @@ def detect_pattern(data: PatternInput):
         reason = f"{pattern} + RSI={data.rsi}, VIX={data.vix}, OI Change={data.oiChange}%"
 
     return PatternOutput(pattern=pattern, signal=signal, confidence=confidence, reason=reason)
-
 
 
 
